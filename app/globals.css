@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-panelBorder;
+  }
+  ::selection {
+    @apply bg-amber/30 text-ink;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-panel border border-panelBorder;
+  }
+  .status-dot {
+    @apply inline-block w-2 h-2;
+  }
+  .readout {
+    @apply font-mono text-xs tracking-tight text-inkDim;
+  }
+}
