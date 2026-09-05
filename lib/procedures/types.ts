@@ -25,20 +25,12 @@ export interface ProcedureStep {
   commonErrors?: Record<ActionId, string>;
   /** If true, performing this step out of order is a safety violation, not just a sequence error. */
   safetyCritical?: boolean;
-  /** Optional node name(s) in the GLTF scene graph to highlight for this step. */
-  highlightNodes?: string[];
-  /** Optional named animation clip to play when this step completes correctly. */
-  animationClip?: string;
-  /**
+    /**
    * If set, this step requires numeric parameter input rather than an action
-   * button, and `evaluate` (below) decides correctness based on real
-   * engineering constraints instead of matching an action id. This is how
-   * "did the student choose an appropriate spindle speed" gets checked
-   * against cutting-speed theory instead of just "did they click the button
-   * labelled set_spindle_speed" — see verticalMillingMachine.ts for the
-   * one worked example. Not implemented for every step in every machine;
-   * that would be a much larger project than a final-year timeline supports.
-   * See README for which steps actually have this and why only one does.
+   * button, and `evaluate` decides correctness using an explicit educational
+   * engineering rule. The milling spindle-speed step is the current worked
+   * numeric example; other controls are interactive but are not presented as
+   * validated plant measurements.
    */
   paramInputs?: { key: string; label: string; unit?: string }[];
   /**

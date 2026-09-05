@@ -1,148 +1,54 @@
-# Digital Twin Lab
+# Final Year Project — Interactive Machine Skills Lab
 
-AI-assisted Digital Twin learning environment for engineering machine
-operation training — Next.js + Three.js + Supabase + Groq/Qwen 3 32B.
+A browser-based mechanical-engineering training environment built around four interactive digital-twin teaching machines. This revision is designed as a **machine-operation learning system**, not a passive CAD viewer.
 
-## What changed in this pass — fixes to the four incomplete items
+## Machines
 
-I ran actual scripts and re-verified against your real files rather than
-just editing text. Results, stated plainly:
+- **Robotic Manipulator** — safety check, controller power, homing, three different workpieces, gripper pick, transfer and placement into a target tray.
+- **Vertical Milling Machine** — workpiece selection, vice clamping, cutter installation, spindle-speed calculation, feed/depth validation, visible cutting pass and release.
+- **Electric Hydraulic Press** — guarding, hydraulic power, pressure/stroke validation, workpiece alignment, two-hand cycle, ram descent/retraction and workpiece forming.
+- **Workhorse 3D Printer** — filament loading, X/Y/Z homing state, gradual heating, job selection, shape-specific toolpath and layer-by-layer printing.
 
-**1. Milling machine and hydraulic press procedures.**
-Expanded from 3-step stubs to 8-step and 7-step sequences
-(`lib/procedures/verticalMillingMachine.ts`,
-`lib/procedures/electricHydroPress.ts`). Still general machine-shop/press
-safety practice, not sourced from a manual for your specific machines —
-verify feeds/speeds and press tonnage limits against real documentation
-before using with students.
+The tensile/bending test machine has been removed from the project.
 
-**2. 3D printer and tensile tester.**
-- Printer: has zero textures (verified: `images.length === 0`), so I wrote
-  `scripts/optimize_3d_printer.py`, which strips the now-provably-unused
-  UV channel and downgrades oversized index buffers — geometry itself
-  untouched. Result, measured on disk: **20.57MB → 14.06MB**. Still heavy;
-  real triangle reduction needs `gltf-transform`/meshoptimizer, which need
-  network access this sandbox doesn't have. Not added to the machine list
-  with a procedure yet — that's still open.
-- Tensile tester: still no real CAD export exists (that's a genuine
-  blocker — see below). I built a **schematic placeholder** from primitives
-  (`scripts/build_placeholder_tensile_tester.py`) grounded in your actual
-  CAD part list (NEMA 34 stepper, lead screw, S-type load cell, 3030
-  extrusion frame, STM32 controller) so the app has 5/5 machines instead of
-  4/5. It is explicitly labeled a placeholder everywhere in the code and UI
-  — swap `modelPath` in `lib/machines.ts` the moment you have a real export.
+## Training architecture
 
-**3. Animations.**
-None of your four source GLBs contain baked clips — still true, verified
-again this pass. Built `lib/animations.ts`: a runtime keyframe system that
-tweens real node transforms directly, with an honest fallback (a whole-model
-pulse) when no real named part exists to target. This only produces
-precise, part-specific motion where I could verify a real node name exists
-(the milling machine's vice, and the tensile-tester placeholder, which I
-authored myself). For the robotic manipulator and hydraulic press, it's a
-generic pulse — see item 4 for why.
+Each machine page has two persistent areas:
 
-**4. Node names.**
-Actually parsed all three real GLBs' node lists (not re-guessed). Result:
-robotic manipulator (56 nodes) and hydraulic press (14 nodes) have **zero**
-semantically meaningful names — generic Sketchfab export artifacts like
-`Cylinder.004`, `Object_7`. The milling machine has 319 nodes, of which
-one real sub-assembly is cleanly named (`Vice Base`, `Fixed Jaw`,
-`Moving Jaw`, `Handle`, `Turntable`, `Arm`, `Holder`, `Flange`) and the rest
-are SolidWorks feature names mangled by a non-UTF8 export (`Chamfer2`,
-garbled Cyrillic/Turkish text). I removed every fabricated node-name guess
-from the previous version and wired real names in wherever they exist. This
-is a genuine, unresolved limitation of the source assets, not something
-fixable in code — the real fix is opening each GLB in Blender and manually
-renaming key parts, which needs a human looking at the geometry.
+1. **Machine/workplace section at the top.** It remains sticky while the student scrolls through the lower section. The 3D machine, workpieces and operation animation never get covered by controls or the tutor.
+2. **Learning/control section below.** It contains the guided procedure, machine controls, workpiece selection, named parts/functions, live state, assessment summary and tutor.
 
-## Honest status — still read this
+## Operation and interlocks
 
-Same caveat as before: I wrote/edited every file by hand with **no internet
-access**, so `npm install`/`npm run build` have still not been run against
-this version. The new scripts (`scripts/*.py`) were run and self-validated
-in this sandbox — their *outputs* (the two GLBs and the size numbers above)
-are real and verified — but the TypeScript/React changes have not been
-compiled. Run `npm install && npm run build` first and fix whatever surfaces.
+The student cannot bypass the intended training sequence. Controls are disabled or blocked when a required setup condition has not been completed. Examples:
 
-What's real and working (once built):
-- All 5 machines have models in `public/models/`.
-- 4 of 5 have complete procedures (printer's is still open — wasn't in
-  scope for this pass; happy to write it next).
-- Procedure engine: deterministic, rule-based, logs every attempt.
-- Animation: genuinely working for the milling-machine vice and the
-  tensile-tester placeholder; honest generic fallback everywhere else.
-- AI tutor uses Groq with Qwen 3 32B by default. The Groq API key is server-side only; if Groq is unavailable, the client deliberately falls back to the deterministic rule-based verdict.
+- Robot motion requires safety confirmation, controller power and homing.
+- Milling feed requires a clamped workpiece, secured cutter, verified spindle speed and validated feed/depth settings.
+- Hydraulic pressing requires power, closed guarding, validated pressure/stroke, workpiece alignment and both two-hand inputs.
+- Printing requires filament, homing, target temperatures and a loaded job before motion begins.
 
-What's still open:
-- Real CAD assembly + export for the tensile tester (needs SolidWorks/
-  Blender access I don't have here).
-- Real polygon reduction for the printer (needs network access for
-  gltf-transform).
-- Manual node relabeling in Blender for the robotic manipulator and
-  hydraulic press, if you want real per-part highlighting on those two.
-- No pre/post test or TAM survey UI (Chapter 3 evaluation instruments).
-- No authentication / student accounts.
+The procedure engine remains deterministic. The AI tutor explains the engine's verdict; it does not decide whether an operation is correct.
 
-## Local setup
+## 3D teaching models
+
+The machines are procedural Three.js models rather than fragile anonymous CAD exports. This allows individual teaching components to be selectable and highlighted, while joints, workpieces and machine motions can be animated directly.
+
+## Assessment/session record
+
+The browser keeps an anonymous session ID and the local UI records attempts, correct actions, safety violations and completion. Supabase persistence is supported through `/api/log` when environment variables are configured.
+
+For a production student-assessment deployment, add **Supabase Auth + Row Level Security** so the student's identity is verified and log rows cannot be fabricated by an unauthenticated caller. The current anonymous session ID is not authentication and must not be described as tamper-proof assessment data.
+
+## AI tutor
+
+Set `GROQ_API_KEY` in Vercel for AI coaching. The API route receives the deterministic procedure verdict and turns it into short contextual feedback. If the external model is unavailable, the local tutor and procedure engine continue to work.
+
+## Development
 
 ```bash
 npm install
-cp .env.example .env.local   # fill in GROQ_API_KEY, GROQ_MODEL (optional), and Supabase values
-npm run dev
+npm run build
+npm run start
 ```
 
-## Supabase setup
-
-1. Create a free project at supabase.com.
-2. In the SQL editor, run:
-   ```sql
-   create table task_logs (
-     id bigint generated always as identity primary key,
-     timestamp timestamptz not null,
-     machine_slug text not null,
-     step_id text not null,
-     student_action text not null,
-     result text not null,
-     attempt_number int not null,
-     session_id text
-   );
-   ```
-3. Copy the Project URL and `service_role` key into `.env.local`. Use the
-   service role key server-side only — it's already only referenced in
-   `app/api/log/route.ts`, never in a client component.
-
-## Deploying to Vercel
-
-1. Push this repo to GitHub.
-2. Go to vercel.com → New Project → import the repo.
-3. Add the three env vars from `.env.example` in Vercel's project settings
-   (Environment Variables), for Production and Preview.
-4. Deploy. Vercel builds and hosts the frontend and API routes together —
-   no separate backend to manage.
-
-## Remaining build order (roadmap)
-
-1. **Fix whatever `npm run build` surfaces** on first run.
-2. **Write the 3D printer's procedure** — model is in the app now, just needs
-   a `lib/procedures/workhorse3dPrinter.ts` and a `machines.ts` entry, same
-   pattern as the other four.
-3. **Get a real tensile-tester export.** The uploaded zip is raw SolidWorks
-   parts with no visible top assembly — needs SolidWorks (or FreeCAD reading
-   the STEP files) plus a glTF export (SimLab, Blender's glTF exporter, or
-   similar). Once you have a real GLB, swap it in for the placeholder in
-   `lib/machines.ts` and re-verify node names the same way this pass did —
-   don't assume the placeholder's node names carry over.
-4. **Real polygon reduction for the printer**, once you have network access:
-   ```bash
-   npx @gltf-transform/cli optimize workhorse_3d_printer.glb workhorse_3d_printer.compressed.glb
-   ```
-   (No `--texture-compress` needed — this file has no textures.)
-5. **Manual node relabeling in Blender** for the robotic manipulator and
-   hydraulic press GLBs, if you want real per-part highlighting/animation on
-   those two instead of the generic pulse fallback. Open each file, identify
-   which mesh is which physical part, rename them, re-export, then update
-   `highlightNodes`/`lib/animations.ts` to match.
-6. **Build the evaluation UI** — pre/post knowledge test, TAM usability
-   survey, and a scoring view reading `task_logs` from Supabase.
-7. **Add lightweight auth** (Supabase Auth) so logs tie to individual students.
+This repository was statically checked in the provided environment using TypeScript's TS/TSX transpiler. A full `next build` still requires dependency installation and a network-enabled Node environment.

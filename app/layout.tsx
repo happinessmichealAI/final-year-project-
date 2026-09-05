@@ -17,7 +17,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Digital Twin Lab — NAUB Mechanical Engineering",
+  title: "Interactive Machine Skills Lab — NAUB Mechanical Engineering",
   description:
     "AI-assisted Digital Twin learning environment for engineering machine operation training.",
 };
