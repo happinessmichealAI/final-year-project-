@@ -68,11 +68,18 @@ function Label({ name, position, active }: { name: string; position: [number, nu
   return <Html position={position} center distanceFactor={7} style={{ pointerEvents: "none" }}><div className={`machine-label ${active ? "machine-label-active" : ""}`}>{name}</div></Html>;
 }
 
-function ClickPart({ id, active, onSelect, children, position = [0, 0, 0] as [number, number, number], rotation = [0, 0, 0] as [number, number, number] }) {
+function ClickPart({ id, active, onSelect, children, position = [0, 0, 0] as [number, number, number], rotation = [0, 0, 0] as [number, number, number] }: {
+  id: string;
+  active?: boolean;
+  onSelect: (id: string) => void;
+  children?: ReactNode;
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+}) {
   return <group position={position} rotation={rotation} onClick={(e) => { e.stopPropagation(); onSelect(id); }}>{children}</group>;
 }
 
-function Metal({ active = false, color = "#66727f", metalness = 0.6, roughness = 0.35 }) {
+function Metal({ active = false, color = "#66727f", metalness = 0.6, roughness = 0.35 }: { active?: boolean; color?: string; metalness?: number; roughness?: number }) {
   return <meshStandardMaterial color={active ? "#4fc3d9" : color} metalness={metalness} roughness={roughness} emissive={active ? "#103b46" : "#000"} emissiveIntensity={active ? 0.8 : 0} />;
 }
 

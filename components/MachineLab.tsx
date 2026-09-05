@@ -117,6 +117,7 @@ const ACTION_LABELS: Record<string, string> = {
 
 export default function MachineLab({ machine }: { machine: MachineMeta }) {
   const { loadProcedure, procedure, currentStepIndex, lastResult, completed, dispatchAction, dispatchParameters, reset, log } = useProcedureEngine();
+  const currentStep = procedure?.steps[currentStepIndex];
   const [state, setState] = useState<LabState>(makeInitialState);
   const [rpm, setRpm] = useState(1200);
   const [feed, setFeed] = useState(0.2);
@@ -220,7 +221,6 @@ export default function MachineLab({ machine }: { machine: MachineMeta }) {
     return () => window.clearInterval(id);
   }, [machine.slug, state.printerPrinting]);
 
-  const currentStep = procedure?.steps[currentStepIndex];
   const progress = procedure ? Math.round((Math.min(currentStepIndex, procedure.steps.length) / procedure.steps.length) * 100) : 0;
   const selectedPart = useMemo(() => machine.parts.find((p) => p.id === state.selectedPart), [machine.parts, state.selectedPart]);
 
