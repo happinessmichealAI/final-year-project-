@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { MachineMeta } from "@/lib/machines";
@@ -118,6 +118,22 @@ const ACTION_LABELS: Record<string, string> = {
 export default function MachineLab({ machine }: { machine: MachineMeta }) {
   const { loadProcedure, procedure, currentStepIndex, lastResult, completed, dispatchAction, dispatchParameters, reset, log } = useProcedureEngine();
   const currentStep = procedure?.steps[currentStepIndex];
+  // Part labels: pointer-down shows the label; pointer-up hands off here.
+  // A quick tap shows then fades after 2s. A held press keeps re-arming the
+  // timer's cancellation (via selectPart on the next down) so it stays lit
+  // the whole time it's held, then fades 2s after release.
+  const partHideTimer = useRef<number | null>(null);
+  const selectPart = (id: string) => {
+    if (partHideTimer.current) { window.clearTimeout(partHideTimer.current); partHideTimer.current = null; }
+    setState((s) => ({ ...s, selectedPart: id }));
+  };
+  const releasePart = () => {
+    if (partHideTimer.current) window.clearTimeout(partHideTimer.current);
+    partHideTimer.current = window.setTimeout(() => {
+      setState((s) => ({ ...s, selectedPart: null }));
+      partHideTimer.current = null;
+    }, 2000);
+  };
   const [state, setState] = useState<LabState>(makeInitialState);
   const [rpm, setRpm] = useState(1200);
   const [feed, setFeed] = useState(0.2);
@@ -128,13 +144,17 @@ export default function MachineLab({ machine }: { machine: MachineMeta }) {
   const [twoHand, setTwoHand] = useState({ left: false, right: false });
   const [tutorLines, setTutorLines] = useState<string[]>(["Select a part to learn its function. Then follow the procedure and operate the controls in sequence. Unsafe or out-of-order machine commands are blocked."]);
   const [tutorInput, setTutorInput] = useState("");
+  const [partSearch, setPartSearch] = useState("");
   const [busyAction, setBusyAction] = useState(false);
   const [studentName, setStudentName] = useState("");
+  const [viewResetToken, setViewResetToken] = useState(0);
 
   useEffect(() => {
     loadProcedure(machine.procedure);
     setState(makeInitialState());
     setTwoHand({ left: false, right: false });
+    if (partHideTimer.current) { window.clearTimeout(partHideTimer.current); partHideTimer.current = null; }
+    setPartSearch("");
     try { setStudentName(window.localStorage.getItem("fyp-student-name") ?? ""); } catch {}
   }, [machine.slug, machine.procedure, loadProcedure]);
 
@@ -223,6 +243,11 @@ export default function MachineLab({ machine }: { machine: MachineMeta }) {
 
   const progress = procedure ? Math.round((Math.min(currentStepIndex, procedure.steps.length) / procedure.steps.length) * 100) : 0;
   const selectedPart = useMemo(() => machine.parts.find((p) => p.id === state.selectedPart), [machine.parts, state.selectedPart]);
+  // Numbering comes straight from machine.parts' own order — the same array
+  // that already drives the Explorer list and part selection. No separate
+  // numbering data to keep in sync.
+  const partNumbers = useMemo(() => Object.fromEntries(machine.parts.map((part, i) => [part.id, i + 1])), [machine.parts]);
+  const numberedParts = useMemo(() => machine.parts.map((part, i) => ({ ...part, number: i + 1 })), [machine.parts]);
 
   const teach = (message: string) => setTutorLines((prev) => [...prev, message]);
 
@@ -435,19 +460,47 @@ export default function MachineLab({ machine }: { machine: MachineMeta }) {
     setTutorLines(["Session reset. Start with the safety inspection."]);
   };
 
-  const askTutor = () => {
+  const [tutorBusy, setTutorBusy] = useState(false);
+  const askTutor = async () => {
     const q = tutorInput.trim();
-    if (!q) return;
+    if (!q || tutorBusy) return;
     setTutorLines((p) => [...p, `YOU: ${q}`]);
     setTutorInput("");
-    const text = q.toLowerCase();
-    let answer = `You are on “${currentStep?.title ?? "Procedure complete"}”. ${currentStep?.instruction ?? "Reset the session to practice again."}`;
-    if (text.includes("workpiece") || text.includes("mount")) answer = "Workholding keeps the material in a known position so the machine can apply its operation predictably. Complete the mounting/alignment step before machine motion.";
-    else if (text.includes("safe") || text.includes("guard") || text.includes("emergency")) answer = "Safety interlocks are deliberate: the simulator blocks motion when a required guarding or setup condition is missing. Treat the virtual sequence like a real pre-start check.";
-    else if (machine.slug === "vertical-milling-machine" && (text.includes("rpm") || text.includes("speed"))) answer = `Current cutting speed is ${(Math.PI * cutterDiameter * rpm / 1000).toFixed(1)} m/min. In this educational setup, the target band is 20–35 m/min.`;
-    else if (machine.slug === "electric-hydro-press" && text.includes("pressure")) answer = `The selected press setting is ${pressure}% with ${stroke} mm stroke. Pressure provides the force capability; stroke defines the ram travel used in this exercise.`;
-    else if (machine.slug === "workhorse-3d-printer" && text.includes("temperature")) answer = `The simulated hotend is ${state.nozzleTemp}°C and the bed is ${state.bedTemp}°C. The print job is enabled only after the target temperatures are reached.`;
-    window.setTimeout(() => setTutorLines((p) => [...p, `TUTOR: ${answer}`]), 200);
+    setTutorBusy(true);
+
+    let engineeringState: Record<string, number> | undefined;
+    if (machine.slug === "vertical-milling-machine") {
+      engineeringState = { cutterDiameterMm: cutterDiameter, rpm, cuttingSpeedMPerMin: Number((Math.PI * cutterDiameter * rpm / 1000).toFixed(1)) };
+    } else if (machine.slug === "electric-hydro-press") {
+      engineeringState = { pressurePercent: pressure, strokeMm: stroke };
+    } else if (machine.slug === "workhorse-3d-printer") {
+      engineeringState = { nozzleTempC: state.nozzleTemp, bedTempC: state.bedTemp };
+    }
+
+    try {
+      const res = await fetch("/api/tutor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          machineTitle: machine.name,
+          selectedComponentName: selectedPart?.name,
+          selectedComponentFunction: selectedPart?.function,
+          stepTitle: currentStep?.title,
+          stepInstruction: currentStep?.instruction,
+          engineeringState,
+          studentQuestion: q,
+        }),
+      });
+      const data = await res.json();
+      const answer = data?.fallback
+        ? "The AI tutor is temporarily unavailable right now (no response from the model service). The procedure panel above still reflects the authoritative, rules-based verdict for your last action."
+        : data?.feedback ?? "No response received.";
+      setTutorLines((p) => [...p, `TUTOR: ${answer}`]);
+    } catch {
+      setTutorLines((p) => [...p, "TUTOR: Could not reach the tutor service right now."]);
+    } finally {
+      setTutorBusy(false);
+    }
   };
 
   const primaryAction = currentStep?.acceptedActions[0] as ActionId | undefined;
@@ -455,23 +508,47 @@ export default function MachineLab({ machine }: { machine: MachineMeta }) {
 
   return (
     <main className="lab-shell">
-      <section className="machine-section">
-        <div className="machine-topbar">
-          <div><Link href="/" className="back-link">← MACHINES</Link><span className="machine-title">{machine.name}</span></div>
-          <div className="machine-status">FINAL YEAR PROJECT · {completed ? "EXERCISE COMPLETE" : "TRAINING ACTIVE"}</div>
-        </div>
-        <div className="machine-viewport">
-          <MachineViewer machineSlug={machine.slug} state={state} onPartSelect={(id) => setState((s) => ({ ...s, selectedPart: id }))} />
-          <div className="viewport-overlay">
-            <div><strong>{machine.shortName}</strong><span>{machine.description}</span>{selectedPart && <small>Selected: {selectedPart.name}</small>}</div>
-            <div className="overlay-progress"><span>{progress}% procedure</span><div><i style={{ width: `${progress}%` }} /></div></div>
+      <div className="viewer-explorer-grid">
+        <section className="machine-section">
+          <div className="machine-topbar">
+            <div><Link href="/" className="back-link">← MACHINES</Link><span className="machine-title">{machine.name}</span></div>
+            <div className="machine-status">FINAL YEAR PROJECT · {completed ? "EXERCISE COMPLETE" : "TRAINING ACTIVE"}</div>
           </div>
-        </div>
-      </section>
+          <div className="machine-viewport">
+            <MachineViewer machineSlug={machine.slug} state={state} onPartSelect={selectPart} onPartRelease={releasePart} resetToken={viewResetToken} partNumbers={partNumbers} />
+            <button className="reset-view-btn" onClick={() => setViewResetToken((t) => t + 1)} title="Return the camera to the default view" aria-label="Reset camera view">⟲ RESET VIEW</button>
+            <div className="viewport-overlay">
+              <div><strong>{machine.shortName}</strong><span>{machine.description}</span>{selectedPart && <small>Selected: {selectedPart.name}</small>}</div>
+              <div className="overlay-progress"><span>{progress}% procedure</span><div><i style={{ width: `${progress}%` }} /></div></div>
+            </div>
+          </div>
+        </section>
+
+        <section className="explorer-section">
+          <div className="explorer-scroll">
+            <div className="card parts-card">
+              <div className="card-title"><span>PARTS & FUNCTIONS</span><span className="muted">Every listed component is selectable in the 3D workplace</span></div>
+              <input className="parts-search" value={partSearch} onChange={(e) => setPartSearch(e.target.value)} placeholder="Search parts…" />
+              <div className="parts-grid">{numberedParts.filter((part) => part.name.toLowerCase().includes(partSearch.trim().toLowerCase())).map((part) => <button key={part.id} className={state.selectedPart === part.id ? "part-active" : ""} onClick={() => { selectPart(part.id); releasePart(); }}><strong><span className="part-number">{String(part.number).padStart(2, "0")}</span> {part.name}</strong><span>{part.function}</span></button>)}</div>
+            </div>
+
+            <div className="card selected-component-card">
+              <div className="card-title"><span>SELECTED COMPONENT</span></div>
+              {selectedPart ? <>
+                <h3><span className="part-number">{String(partNumbers[selectedPart.id] ?? 0).padStart(2, "0")}</span> {selectedPart.name}</h3>
+                <p className="component-function"><b>Function</b> {selectedPart.function}</p>
+                <p className="component-relevance"><b>Training relevance</b> {selectedPart.relevance}</p>
+              </> : <p className="component-empty">Tap or click any part in the 3D view, or pick one from the list above, to see its name and function here.</p>}
+            </div>
+
+            <div className="card tutor-card"><div className="card-title"><span>AI TUTOR</span><span className="muted">Procedure engine assesses; tutor explains</span></div><div className="tutor-log">{tutorLines.map((line, i) => <p key={i}>{line}</p>)}{tutorBusy && <p className="tutor-thinking">TUTOR: …</p>}</div><div className="tutor-input"><input value={tutorInput} onChange={(e) => setTutorInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && askTutor()} disabled={tutorBusy} placeholder={selectedPart ? `Ask about the ${selectedPart.name}…` : "Select a part, or ask about setup, safety, or operation…"}/><button onClick={askTutor} disabled={tutorBusy || !tutorInput.trim()}>{tutorBusy ? "…" : "ASK"}</button></div></div>
+          </div>
+        </section>
+      </div>
 
       <section className="learning-section">
         <div className="learning-inner">
-          <div className="section-heading"><div><span className="eyebrow">TRAINING WORKSPACE</span><h1>Operate, observe and learn</h1><p>The machine stays visible above. This lower section contains the procedure, real machine controls, workholding, named parts and tutor. Controls are interlocked with the training state.</p></div><button className="ghost-btn" onClick={resetLab}>RESET SESSION</button></div>
+          <div className="section-heading"><div><span className="eyebrow">TRAINING WORKSPACE</span><h1>Operate, observe and learn</h1><p>The machine stays visible above. This lower section contains the procedure and real machine controls. Controls are interlocked with the training state.</p></div><button className="ghost-btn" onClick={resetLab}>RESET SESSION</button></div>
 
           <div className="learning-grid">
             <div className="main-learning">
@@ -533,10 +610,6 @@ export default function MachineLab({ machine }: { machine: MachineMeta }) {
                   <div className="progress-track"><i style={{ width: `${Math.round(state.printerProgress * 100)}%` }} /></div>
                 </>}
               </div>
-
-              <div className="card parts-card"><div className="card-title"><span>PARTS & FUNCTIONS</span><span className="muted">Every listed component is selectable in the 3D workplace</span></div><div className="parts-grid">{machine.parts.map((part) => <button key={part.id} className={state.selectedPart === part.id ? "part-active" : ""} onClick={() => setState((s) => ({ ...s, selectedPart: part.id }))}><strong>{part.name}</strong><span>{part.function}</span></button>)}</div></div>
-
-              <div className="card tutor-card"><div className="card-title"><span>AI TUTOR</span><span className="muted">Procedure engine assesses; tutor explains</span></div><div className="tutor-log">{tutorLines.map((line, i) => <p key={i}>{line}</p>)}</div><div className="tutor-input"><input value={tutorInput} onChange={(e) => setTutorInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && askTutor()} placeholder="Ask about setup, safety, workholding or machine operation…"/><button onClick={askTutor}>ASK</button></div></div>
             </div>
 
             <aside className="side-learning">

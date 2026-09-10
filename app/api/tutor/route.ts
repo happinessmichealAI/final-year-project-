@@ -3,11 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 // IMPORTANT: this route never decides whether the student's action was
 // correct — the procedure engine (lib/procedureEngine.ts) already decided
 // that deterministically before this is called. The model's only job here is
-// to turn { step, studentAction, result, message } into a short, specific,
-// non-generic coaching line. This keeps the engineering/error-detection logic
-// traceable to rules and keeps the AI tutor focused on explanation.
+// to turn context into a short, specific, non-generic response. This keeps
+// the engineering/error-detection logic traceable to rules and keeps the AI
+// tutor focused on explanation, in both of this route's two modes:
+//   - action feedback (existing): explains a verdict already reached
+//   - free question (new): answers a student's own question using only the
+//     supplied machine/component/procedure/engineering-state context
 
-const SYSTEM_PROMPT = `You are a machine-operation lab tutor for a Nigerian mechanical
+const FEEDBACK_SYSTEM_PROMPT = `You are a machine-operation lab tutor for a Nigerian mechanical
 engineering course, supporting four machines: a robotic manipulator, a
 vertical milling machine, an electric hydraulic press, and a 3D printer. You will be given: which machine, the
 current procedure step, whether it's safety-critical, the student's action
@@ -33,6 +36,33 @@ Rules, in order of importance:
    acknowledge that plainly ("second time on this one") rather than repeating
    the exact same phrasing as if it were the first attempt.`;
 
+const QUESTION_SYSTEM_PROMPT = `You are an engineering education tutor for a Nigerian mechanical
+engineering course, supporting four machines: a robotic manipulator, a
+vertical milling machine, an electric hydraulic press, and a 3D printer. A
+student has asked a free-form question while using the training simulator.
+You will be given: which machine, which component (if any) they currently
+have selected and its stated function, the current procedure step, and the
+current engineering/simulation state (e.g. cutter diameter/RPM/cutting
+speed, press pressure/stroke, printer temperatures) where applicable.
+
+Rules, in order of importance:
+1. You do not determine whether an operation is correct or safe
+   independently. The deterministic procedure engine and engineering rule
+   engine in this application are authoritative for that. If the student
+   asks whether something is correct/safe, defer to what the supplied
+   context already states rather than judging it yourself.
+2. Do not invent engineering values, machine specifications, formulas, or
+   safety limits beyond what is supplied in the context below. You may
+   explain and reason using those given numbers; you may not assert new
+   ones.
+3. If a component is selected, ground your answer in its actual stated
+   function and its role in the current procedure step, rather than
+   answering generically.
+4. Be concise: 2-4 sentences, direct, appropriate for a student actively
+   operating the machine right now, not a textbook excerpt.
+5. If the question is unrelated to the machine, component, or procedure,
+   answer briefly and steer back to the training context.`;
+
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "qwen/qwen3-32b";
 
@@ -47,28 +77,61 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const {
-      machineTitle,
-      stepTitle,
-      stepInstruction,
-      studentAction,
-      result,
-      templateMessage,
-      safetyCritical,
-      parameters,
-      attemptNumber,
-    } = body;
+    const isQuestion = typeof body.studentQuestion === "string" && body.studentQuestion.trim().length > 0;
 
-    const contextLines = [
-      `Machine: ${machineTitle ?? "unspecified"}`,
-      `Current step: "${stepTitle}" — ${stepInstruction}`,
-      `Safety-critical step: ${safetyCritical ? "yes" : "no"}`,
-      `Student action: ${studentAction}`,
-      parameters ? `Student-entered parameters: ${JSON.stringify(parameters)}` : null,
-      `Attempt number on this step: ${attemptNumber ?? 1}`,
-      `Rules-engine verdict: ${result}`,
-      `Template message (contains any engineering numbers you may reference): ${templateMessage}`,
-    ].filter(Boolean);
+    let systemPrompt: string;
+    let userContent: string;
+
+    if (isQuestion) {
+      const {
+        machineTitle,
+        selectedComponentName,
+        selectedComponentFunction,
+        stepTitle,
+        stepInstruction,
+        engineeringState,
+        studentQuestion,
+      } = body;
+
+      const contextLines = [
+        `Machine: ${machineTitle ?? "unspecified"}`,
+        selectedComponentName
+          ? `Selected component: ${selectedComponentName} — ${selectedComponentFunction ?? "(no function text supplied)"}`
+          : "Selected component: none currently selected",
+        stepTitle ? `Current procedure step: "${stepTitle}" — ${stepInstruction ?? ""}` : "Current procedure step: none active",
+        engineeringState ? `Current engineering/simulation state: ${JSON.stringify(engineeringState)}` : null,
+        `Student question: ${studentQuestion}`,
+      ].filter(Boolean);
+
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
+      userContent = `${contextLines.join("\n")}\n\nAnswer the student's question now.`;
+    } else {
+      const {
+        machineTitle,
+        stepTitle,
+        stepInstruction,
+        studentAction,
+        result,
+        templateMessage,
+        safetyCritical,
+        parameters,
+        attemptNumber,
+      } = body;
+
+      const contextLines = [
+        `Machine: ${machineTitle ?? "unspecified"}`,
+        `Current step: "${stepTitle}" — ${stepInstruction}`,
+        `Safety-critical step: ${safetyCritical ? "yes" : "no"}`,
+        `Student action: ${studentAction}`,
+        parameters ? `Student-entered parameters: ${JSON.stringify(parameters)}` : null,
+        `Attempt number on this step: ${attemptNumber ?? 1}`,
+        `Rules-engine verdict: ${result}`,
+        `Template message (contains any engineering numbers you may reference): ${templateMessage}`,
+      ].filter(Boolean);
+
+      systemPrompt = FEEDBACK_SYSTEM_PROMPT;
+      userContent = `${contextLines.join("\n")}\n\nWrite the coaching response now.`;
+    }
 
     const response = await fetch(GROQ_API_URL, {
       method: "POST",
@@ -79,13 +142,10 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model: process.env.GROQ_MODEL || DEFAULT_MODEL,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: `${contextLines.join("\n")}\n\nWrite the coaching response now.`,
-          },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent },
         ],
-        max_tokens: 200,
+        max_tokens: 220,
         temperature: 0.3,
         reasoning_effort: "none",
       }),
@@ -121,3 +181,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+

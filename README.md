@@ -31,7 +31,15 @@ The procedure engine remains deterministic. The AI tutor explains the engine's v
 
 ## 3D teaching models
 
-The machines are procedural Three.js models rather than fragile anonymous CAD exports. This allows individual teaching components to be selectable and highlighted, while joints, workpieces and machine motions can be animated directly.
+All four machines now use real 3D-scanned models for their static bodies (see Credits). Each machine's moving part — the robot's arm, the mill's cutter/vice, the press's ram/die, the printer's carriage — is still driven by our own animated, clickable system, since none of the source models include a rig; a static scan can't animate on its own.
+
+## Credits
+
+3D models used for the static machine bodies, all licensed **CC-BY-4.0** (http://creativecommons.org/licenses/by/4.0/), sourced from Sketchfab:
+- Robotic Manipulator — **Makke** — https://sketchfab.com/3d-models/robotic-manipulator-0fd88ae6662745c9a73e28afc9991be4
+- Electric Hydro Press — **bluoppVR** — https://sketchfab.com/3d-models/electric-hydro-press-8f4bd0b60353408d8b598a1de458f4b0
+- Vertical Milling Machine — **vramstudio** — https://sketchfab.com/3d-models/vertical-milling-machine-0e7444ee28aa4150b60b966179085f55
+- Workhorse 3D Printer — **3D Distributed** — https://sketchfab.com/3d-models/workhorse-3d-printer-74a15c93277c4a8485bdd0fa8da8550b
 
 ## Assessment/session record
 
